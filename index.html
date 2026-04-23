@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>广西全域旅游地图 | 制图规范 · 分级渲染 · 双图层</title>
+    <link rel="stylesheet" href="https://js.arcgis.com/4.28/esri/themes/light/main.css">
+    <script src="https://js.arcgis.com/4.28/"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #1a7a5c;
+            --primary-dark: #0e5e45;
+            --accent: #f0a04b;
+            --bg-light: #f7f9fc;
+            --shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+            --radius: 16px;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #eef2f5;
+        }
+
+        /* 三区域布局 */
+        #app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* ========= 区域一：页眉 ========= */
+        #header {
+            background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+            color: white;
+            padding: 0 24px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+            z-index: 100;
+            flex-shrink: 0;
+        }
+
+        #header .title {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* 图层列表控件 (图层控制微件) */
+        .layer-toggle-group {
+            display: flex;
+            gap: 20px;
+            font-size: 15px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 6px 20px;
+            border-radius: 30px;
+            backdrop-filter: blur(4px);
+        }
+
+        .layer-toggle-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+
+        .layer-toggle-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .layer-toggle-icon {
+            font-size: 16px;
+            color: #f8f9fa;
+        }
+
+        /* ========= 区域二：地图主区域 ========= */
+        #main-area {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #viewDiv {
+            flex: 1;
+            height: 100%;
+            background: #dce3e8;
+            /* 关键修改：让内部绝对定位微件相对于地图容器定位 */
+            position: relative;
+        }
+
+        /* 浮动微件（制图规范） */
+        .map-widget {
+            position: absolute;
+            z-index: 99;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(8px);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+
+        .zoom-widget { top: 15px; left: 15px; border-radius: 30px; }
+        .compass-widget { top: 15px; right: 15px; background: rgba(255,255,255,0.94); border-radius: 40px; padding: 4px; }
+        .search-widget { top: 15px; left: 75px; width: 260px !important; border-radius: 30px; }
+        /* 比例尺：左下角加大加粗 */
+        .scalebar-widget { bottom: 28px; left: 20px; background: rgba(0,0,0,0.75); backdrop-filter: blur(6px); padding: 6px 14px; border-radius: 32px; color: white; font-weight: 600; }
+        .scalebar-widget .esri-scale-bar__label { font-size: 14px !important; color: #f5f5f5; font-weight: 600; }
+        .scalebar-widget .esri-scale-bar__line { background: #ffd966; height: 3px; }
+        /* 图例：地图区域右下角（已通过 #viewDiv 的 position: relative 生效） */
+        .legend-widget { 
+            bottom: 28px; 
+            right: 20px; 
+            width: 210px; 
+            max-height: 260px; 
+            overflow-y: auto; 
+            padding: 8px 12px !important; 
+            background: rgba(255,255,248,0.96); 
+            border-radius: 20px; 
+        }
+
+        /* 右侧信息面板（取代弹窗） */
+        #info-panel {
+            width: 340px;
+            background: white;
+            border-left: 1px solid #e2e8f0;
+            box-shadow: -4px 0 10px rgba(0, 0, 0, 0.03);
+            overflow-y: auto;
+            padding: 20px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            transition: transform 0.25s ease;
+            z-index: 60;
+            flex-shrink: 0;
+        }
+
+        .panel-card {
+            background: var(--bg-light);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
+
+        .panel-card h3 {
+            font-size: 16px;
+            color: var(--primary-dark);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 4px;
+        }
+
+        #selected-place-name {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .rating-stars {
+            color: var(--accent);
+            font-size: 18px;
+            letter-spacing: 2px;
+            display: inline-block;
+            margin-top: 4px;
+        }
+
+        .rating-value {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-left: 6px;
+        }
+
+        /* 柱状图 */
+        .bar-chart {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 24px;
+            height: 95px;
+            margin-top: 6px;
+            padding: 0 16px;
+        }
+
+        .bar-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            width: 50px;
+        }
+
+        .bar {
+            width: 36px;
+            background: linear-gradient(to top, var(--primary), #45b08c);
+            border-radius: 8px 8px 0 0;
+            transition: height 0.5s ease;
+            box-shadow: 0 2px 6px rgba(26, 122, 92, 0.2);
+            max-height: 75px;
+        }
+
+        .bar-label {
+            font-size: 11px;
+            color: #475569;
+            font-weight: 600;
+        }
+
+        .bar-value {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--primary-dark);
+        }
+
+        /* ========= 区域三：底图库区域 ========= */
+        #footer {
+            height: 110px;
+            background: white;
+            border-top: 1px solid #e2e8f0;
+            box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+            z-index: 90;
+            /* 移除横向滚动，改为弹性布局均匀分布 */
+        }
+
+        #basemapGalleryDiv {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center; /* 水平居中 */
+            align-items: center;
+        }
+
+        .esri-basemap-gallery {
+            background: transparent !important;
+            display: flex !important;
+            /* 移除横向滚动，改为自动换行 */
+            flex-wrap: nowrap;
+            justify-content: center; /* 底图项居中 */
+            align-items: center;
+            gap: 15px !important; /* 增大间距更美观 */
+            padding: 4px 20px !important;
+            width: 100%;
+        }
+
+        .esri-basemap-gallery__item-container {
+            display: flex !important;
+            flex-direction: row !important;
+            gap: 15px !important;
+            justify-content: center;
+            width: 100%;
+        }
+
+        .esri-basemap-gallery__item {
+            border-radius: 12px !important;
+            transition: all 0.2s ease; /* 更顺滑的过渡 */
+            width: 90px !important; /* 稍微增大尺寸 */
+            height: 90px !important;
+            background: #f8fafc;
+            flex-direction: column !important;
+            cursor: pointer;
+            border: 1px solid #dee4ec;
+            /* 悬停效果 */
+        }
+        
+        /* 底图项悬停和选中效果优化 */
+        .esri-basemap-gallery__item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            border-color: var(--primary);
+        }
+
+        .esri-basemap-gallery__item-thumbnail {
+            width: 75px !important; /* 增大缩略图 */
+            height: 55px !important;
+            border-radius: 8px;
+            margin-bottom: 4px;
+        }
+
+        .esri-basemap-gallery__item-title {
+            font-size: 11px !important; /* 增大字体 */
+            color: #334155;
+            white-space: nowrap;
+            font-weight: 500;
+        }
+
+        .esri-basemap-gallery__item--selected {
+            box-shadow: 0 0 0 2px var(--primary) !important;
+            background: var(--bg-light);
+        }
+
+        /* 响应式 */
+        @media (max-width: 850px) {
+            #info-panel { width: 0; padding: 0; display: none; }
+            .search-widget { width: 200px !important; left: 70px; }
+            .legend-widget { width: 170px; bottom: 28px; }
+            /* 移动端底图库适配 */
+            .esri-basemap-gallery__item {
+                width: 75px !important;
+                height: 75px !important;
+            }
+            .esri-basemap-gallery__item-thumbnail {
+                width: 60px !important;
+                height: 40px !important;
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <!-- 页眉 + 图层列表控件 -->
+    <header id="header">
+        <div class="title">
+            <span>🗺️</span> 广西全域旅游地图
+        </div>
+        <div class="layer-toggle-group">
+            <div class="layer-toggle-item" id="toggle-scenic">
+                <span class="layer-toggle-icon" id="scenic-icon">👁</span>
+                <span>景点评分图层</span>
+            </div>
+            <div class="layer-toggle-item" id="toggle-admin">
+                <span class="layer-toggle-icon" id="admin-icon">👁</span>
+                <span>行政区划参考</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- 地图区域 -->
+    <div id="main-area">
+        <div id="viewDiv">
+            <div id="zoom-widget" class="map-widget zoom-widget"></div>
+            <div id="compass-widget" class="map-widget compass-widget"></div>
+            <div id="search-widget" class="map-widget search-widget"></div>
+            <div id="scalebar-widget" class="map-widget scalebar-widget"></div>
+            <div id="legend-widget" class="map-widget legend-widget"></div>
+        </div>
+
+        <!-- 右侧信息面板（完全取代弹窗） -->
+        <aside id="info-panel">
+            <div class="panel-card">
+                <h3>🔎 点击景点查看详情</h3>
+                <div id="place-detail-content">
+                    <p style="color:#94a3b8; text-align:center; margin-top:16px;">在地图上点击景点标记</p>
+                </div>
+            </div>
+            <div class="panel-card" id="chart-card" style="display:none;">
+                <h3>📊 年游客量（千人）</h3>
+                <div class="bar-chart" id="bar-chart-container"></div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- 底图库区域 -->
+    <footer id="footer">
+        <div id="basemapGalleryDiv"></div>
+    </footer>
+</div>
+
+<script>
+    (function() {
+        // ---------- 服务地址与令牌（完全保持原始） ----------
+        const ADMIN_LAYER_URL = "https://www.geosceneonline.cn/server/rest/services/Hosted/广西行政区划图层/FeatureServer/0";
+        const ADMIN_TOKEN = "5-WPix62c6G311u4FguA0AakNZYDzuCQDiARtb4o3dhq6vqpu4UKgl6sJDCyuj_Zkcl7NGI19p502mPmObaRDvSdyUcZX2ol9BX1JAkI9mpMjy11tw285QyhBIWCYQ62rvnDqlAzqZL1E_3A5V7umeycL-ATAr_DFp1ZqycmEeshGkmStqPFU4HwnJPbpQZA84tPoOe79g1iK0s9OcRCIpLsiKe0snS0vNbKPKNcXHDu474OJwaTEr0lYXsl6h50GmXIHpKzzMugQdyrw7iSqA..";
+        const SCENIC_LAYER_URL = "https://www.geosceneonline.cn/server/rest/services/Hosted/广西景点介绍/FeatureServer/0";
+        const SCENIC_TOKEN = "5-WPix62c6G311u4FguA0AakNZYDzuCQDiARtb4o3dhq6vqpu4UKgl6sJDCyuj_ZANrMS_kATdfe5Rl3rjWpRpBYGeajQZ5v0Pjk4DPy-Tu_xUz7nHKWeZWUXcH6EUGbbjVTGgqndSudSeB687oay6xy13ZSmVfXvUm14MjiDRQWm9IOwBdHYFaGQL5rNtkaPWT4v_nLw6xnFmXsuUV0RrOqAjUo2NbSLZi473wNcMLlteIlDw81SchwKdRwzAXAX4rQBpkfiuATFgizz7gAhw..";
+        const PORTAL_URL = "https://www.geosceneonline.cn/geoscene";
+
+        require([
+            "esri/config",
+            "esri/Map",
+            "esri/views/MapView",
+            "esri/layers/FeatureLayer",
+            "esri/widgets/Search",
+            "esri/widgets/ScaleBar",
+            "esri/widgets/Legend",
+            "esri/widgets/BasemapGallery",
+            "esri/widgets/Zoom",
+            "esri/widgets/Compass",
+            "esri/identity/IdentityManager",
+            "esri/PopupTemplate",
+            "esri/renderers/ClassBreaksRenderer",
+            "esri/symbols/SimpleMarkerSymbol"
+        ], function(
+            esriConfig, Map, MapView, FeatureLayer,
+            Search, ScaleBar, Legend, BasemapGallery, Zoom, Compass,
+            IdentityManager, PopupTemplate,
+            ClassBreaksRenderer, SimpleMarkerSymbol
+        ) {
+            esriConfig.portalUrl = PORTAL_URL;
+            // 注册Token
+            IdentityManager.registerToken({
+                server: "https://www.geosceneonline.cn/server/rest/services/Hosted/广西行政区划图层",
+                token: ADMIN_TOKEN,
+                ssl: true,
+                expires: new Date().getTime() + 7 * 24 * 3600 * 1000
+            });
+            IdentityManager.registerToken({
+                server: "https://www.geosceneonline.cn/server/rest/services/Hosted/广西景点介绍",
+                token: SCENIC_TOKEN,
+                ssl: true,
+                expires: new Date().getTime() + 7 * 24 * 3600 * 1000
+            });
+            esriConfig.request.interceptors.push({
+                urls: "https://www.geosceneonline.cn/server/rest/services/Hosted/**",
+                before: function(params) {
+                    if (!params.requestOptions.headers) params.requestOptions.headers = {};
+                    const url = params.url;
+                    if (url.includes("广西行政区划图层")) {
+                        params.requestOptions.headers["Authorization"] = `Bearer ${ADMIN_TOKEN}`;
+                    } else if (url.includes("广西景点介绍")) {
+                        params.requestOptions.headers["Authorization"] = `Bearer ${SCENIC_TOKEN}`;
+                    }
+                }
+            });
+
+            const map = new Map({
+                basemap: "osm",
+                ground: "world-elevation"
+            });
+
+            const view = new MapView({
+                container: "viewDiv",
+                map: map,
+                center: [108.32, 22.82],
+                zoom: 7.5,
+                constraints: { minZoom: 6, maxZoom: 18 },
+                popup: { autoOpenEnabled: false },   // 完全禁用默认弹窗
+                ui: { components: ["attribution"] }
+            });
+
+            // ---------- ⭐⭐⭐ 行政区划图层：完全复刻旧代码，无任何渲染器修改 ⭐⭐⭐ ----------
+            const adminLayer = new FeatureLayer({
+                url: ADMIN_LAYER_URL,
+                title: "🗺️ 广西行政区划",
+                outFields: ["*"],
+                visible: true,
+                opacity: 0.65,
+                popupEnabled: false,
+                legendEnabled: false
+                // 注意：没有 renderer 属性，完全依赖服务默认样式，确保与旧代码显示效果一致
+            });
+
+            // ---------- 景点图层（增加分级渲染，美观且符合制图规范） ----------
+            // 评分分级规则
+            const gradeBreaks = [
+                { min: 3.5, max: 4.2, color: "#E07C3C", label: "3.5 - 4.2  一般" },
+                { min: 4.2, max: 4.5, color: "#F4A261", label: "4.2 - 4.5  良好" },
+                { min: 4.5, max: 4.7, color: "#69B578", label: "4.5 - 4.7  优质" },
+                { min: 4.7, max: 5.0, color: "#2A9D8F", label: "4.7 - 5.0  臻品" }
+            ];
+            const classInfos = gradeBreaks.map(g => ({
+                minValue: g.min,
+                maxValue: g.max,
+                symbol: new SimpleMarkerSymbol({ style: "circle", color: g.color, size: 12, outline: { width: 1, color: "white" } }),
+                label: g.label
+            }));
+            const scenicRenderer = new ClassBreaksRenderer({
+                field: "visitor_ratings",
+                defaultSymbol: new SimpleMarkerSymbol({ style: "circle", color: "#B0BEC5", size: 10 }),
+                defaultLabel: "评分缺失",
+                classBreakInfos: classInfos
+            });
+
+            const scenicLayer = new FeatureLayer({
+                url: SCENIC_LAYER_URL,
+                title: "📍 广西景点介绍",
+                outFields: ["*"],
+                visible: true,
+                renderer: scenicRenderer,
+                popupTemplate: new PopupTemplate({
+                    title: "{name}",
+                    content: " "   // 空模板，避免弹窗
+                })
+            });
+
+            map.addMany([adminLayer, scenicLayer]);
+
+            // ---------- 图层控制（图层列表微件） ----------
+            const scenicToggle = document.getElementById("toggle-scenic");
+            const adminToggle = document.getElementById("toggle-admin");
+            const scenicIcon = document.getElementById("scenic-icon");
+            const adminIcon = document.getElementById("admin-icon");
+
+            function updateToggleIcons() {
+                scenicIcon.textContent = scenicLayer.visible ? "👁" : "⚫";
+                adminIcon.textContent = adminLayer.visible ? "👁" : "⚫";
+            }
+            updateToggleIcons();
+
+            scenicToggle.addEventListener("click", () => {
+                scenicLayer.visible = !scenicLayer.visible;
+                updateToggleIcons();
+            });
+            adminToggle.addEventListener("click", () => {
+                adminLayer.visible = !adminLayer.visible;
+                updateToggleIcons();
+            });
+
+            // ---------- 右侧信息面板逻辑（取代弹窗） ----------
+            const placeNameEl = document.getElementById("place-detail-content");
+            const chartCard = document.getElementById("chart-card");
+            const barContainer = document.getElementById("bar-chart-container");
+
+            function updateInfoPanel(graphic) {
+                if (!graphic || !graphic.attributes) {
+                    placeNameEl.innerHTML = '<p style="color:#94a3b8; text-align:center; margin-top:16px;">在地图上点击景点标记</p>';
+                    chartCard.style.display = "none";
+                    return;
+                }
+                const attr = graphic.attributes;
+                const name = attr.name || "未知景点";
+                const rating = attr.visitor_ratings || 0;
+                const tourists2018 = attr.number_of_tourists_2018_thousan || 0;
+                const tourists2019 = attr.number_of_tourists_2019_thousan || 0;
+                const roundedRating = Math.round(Number(rating));
+                const starsFilled = Math.min(roundedRating, 5);
+                const starsEmpty = 5 - starsFilled;
+
+                placeNameEl.innerHTML = `
+                    <h4 id="selected-place-name">🏕️ ${name}</h4>
+                    <div style="margin-top:8px;">
+                        <span class="rating-stars">${'★'.repeat(starsFilled)}${'☆'.repeat(starsEmpty)}</span>
+                        <span class="rating-value">${Number(rating).toFixed(1)}</span>
+                    </div>
+                    <p style="font-size:13px; background:#f0f9f4; padding:8px; border-radius:12px; margin-top:12px;">
+                        📖 ${attr.caption || "古韵山水，广西经典游憩胜地。"}
+                    </p>
+                `;
+
+                const maxVal = Math.max(tourists2018, tourists2019, 1);
+                const barMaxHeight = 70;
+                const height2018 = Math.min((tourists2018 / maxVal) * barMaxHeight, barMaxHeight);
+                const height2019 = Math.min((tourists2019 / maxVal) * barMaxHeight, barMaxHeight);
+                barContainer.innerHTML = `
+                    <div class="bar-wrapper">
+                        <div class="bar" style="height:${height2018}px;"></div>
+                        <span class="bar-value">${Number(tourists2018).toLocaleString()}</span>
+                        <span class="bar-label">2018</span>
+                    </div>
+                    <div class="bar-wrapper">
+                        <div class="bar" style="height:${height2019}px;"></div>
+                        <span class="bar-value">${Number(tourists2019).toLocaleString()}</span>
+                        <span class="bar-label">2019</span>
+                    </div>
+                `;
+                chartCard.style.display = "block";
+            }
+
+            // 地图点击：更新右侧面板，不弹出任何原生窗口
+            view.on("click", function(event) {
+                view.hitTest(event).then(function(response) {
+                    const scenicResult = response.results.find(
+                        r => r.graphic && r.graphic.layer === scenicLayer
+                    );
+                    if (scenicResult) {
+                        updateInfoPanel(scenicResult.graphic);
+                    } else {
+                        updateInfoPanel(null);
+                    }
+                });
+            });
+
+            // ---------- 搜索微件（支持景点和行政区） ----------
+            let searchWidget = null;
+            function initSearch() {
+                if (searchWidget) searchWidget.destroy();
+                const sources = [];
+                if (scenicLayer.loaded && scenicLayer.fields) {
+                    const stringFields = scenicLayer.fields.filter(f => f.type === "string").map(f => f.name);
+                    if (stringFields.length) {
+                        sources.push({
+                            layer: scenicLayer,
+                            searchFields: stringFields,
+                            displayField: stringFields[0],
+                            exactMatch: false,
+                            outFields: ["*"],
+                            name: "广西景点",
+                            placeholder: "搜索景点名称或地址",
+                            zoomScale: 50000
+                        });
+                    }
+                }
+                if (adminLayer.loaded && adminLayer.fields) {
+                    const stringFields = adminLayer.fields.filter(f => f.type === "string").map(f => f.name);
+                    if (stringFields.length) {
+                        sources.push({
+                            layer: adminLayer,
+                            searchFields: stringFields,
+                            displayField: stringFields[0],
+                            exactMatch: false,
+                            outFields: ["*"],
+                            name: "广西行政区",
+                            placeholder: "搜索行政区（如南宁市）",
+                            zoomScale: 50000
+                        });
+                    }
+                }
+                searchWidget = new Search({
+                    view: view,
+                    container: "search-widget",
+                    includeDefaultSources: false,
+                    sources: sources
+                });
+                searchWidget.on("select-result", function(event) {
+                    if (event.result && event.result.feature && event.result.feature.layer === scenicLayer) {
+                        updateInfoPanel(event.result.feature);
+                    } else {
+                        updateInfoPanel(null);
+                    }
+                });
+            }
+
+            // 确保图层加载完成后初始化搜索
+            Promise.all([adminLayer.load(), scenicLayer.load()]).then(() => {
+                initSearch();
+            }).catch(err => {
+                console.warn("图层加载延迟，搜索仍会尝试", err);
+                if (scenicLayer.loaded || adminLayer.loaded) initSearch();
+            });
+
+            // ---------- 微件：缩放、指北针、比例尺、图例、底图库 ----------
+            new Zoom({ view: view, container: "zoom-widget" });
+            new Compass({ view: view, container: "compass-widget" });
+            new ScaleBar({ view: view, container: "scalebar-widget", unit: "metric", style: "ruler" });
+
+            // 图例仅展示景点评分分级
+            new Legend({
+                view: view,
+                container: "legend-widget",
+                layerInfos: [{ layer: scenicLayer, title: "景点评分分级" }],
+                style: { layout: "stack" }
+            });
+
+            // 优化底图库配置：增加更多底图选项，让底部更饱满
+            new BasemapGallery({
+                view: view,
+                container: "basemapGalleryDiv",
+                orientation: "horizontal",
+                source: {
+                    portal: { url: "https://www.arcgis.com" },
+                    // 增加更多底图选项，填充底部空间
+                    basemapIds: [
+                        "osm", 
+                        "streets-navigation-vector", 
+                        "imagery-standard", 
+                        "topographic", 
+                        "gray-light",
+                        "gray-dark",
+                        "streets-relief-vector",
+                        "oceans"
+                    ]
+                }
+            });
+
+            view.when(() => {
+                console.log("✅ 广西旅游地图已启动 | 行政区划图层完全复刻旧版 | 右侧面板无弹窗 | 底图库布局优化完成");
+            });
+        });
+    })();
+</script>
+</body>
+</html>
